@@ -1,0 +1,11 @@
+{
+  "profiles": {
+    "SolaxReaderMqtt": {
+      "commandName": "Project",
+      "environmentVariables": {
+        "SOLAX_URI": "192.168.1.52",
+        "MQTT_BROKER_URI": "192.168.1.51"
+      }
+    }
+  }
+}
