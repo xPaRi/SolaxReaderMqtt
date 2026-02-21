@@ -1,18 +1,27 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
-  <PropertyGroup>
-    <OutputType>Exe</OutputType>
-    <TargetFramework>net8.0</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
-  </PropertyGroup>
+	<PropertyGroup>
+		<OutputType>Exe</OutputType>
+		<TargetFramework>net8.0</TargetFramework>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+		<PublishSingleFile>false</PublishSingleFile>
+		
+		<BuildDate>$([System.DateTime]::Now.ToString("yyyy.MM.dd"))</BuildDate>
+		<BuildTime>$([System.DateTime]::Now.ToString("HHmm"))</BuildTime>
 
-  <ItemGroup>
-    <PackageReference Include="MQTTnet" Version="4.2.1.781" />
-  </ItemGroup>
+		<Version>$(BuildDate).$(BuildTime)</Version>
+		<InformationalVersion>$(BuildDate) (vytvořeno v $(BuildTime))</InformationalVersion>
+		
+		<IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+	</PropertyGroup>
 
-  <ItemGroup>
-    <ProjectReference Include="..\SolaxBase\SolaxBase.csproj" />
-  </ItemGroup>
+	<ItemGroup>
+		<PackageReference Include="MQTTnet" Version="4.2.1.781" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\SolaxBase\SolaxBase.csproj" />
+	</ItemGroup>
 
 </Project>
