@@ -18,8 +18,20 @@ internal class Program
     private static readonly ConsoleColor ConsoleColorDefault = Console.ForegroundColor;
     private static readonly ConsoleColor ConsoleColorError = ConsoleColor.Red;
 
-    static async Task Main(string[] args)
+    private static CancellationTokenSource _cts = new();
+
+    private static readonly HttpClient _httpClient = new() 
+    { 
+        Timeout = TimeSpan.FromSeconds(5),
+        DefaultRequestHeaders = {{ "X-Forwarded-For", "5.8.8.8" }}
+    };
+
+    private static IMqttClient? _mqttClient;
+    private static MqttClientOptions? _mqttOptions;
+
+    static async Task Main()
     {
+        //--- Příprava
         var version = Assembly.GetEntryAssembly()?
             .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
             .InformationalVersion ?? "Neznámá verze";
@@ -27,6 +39,11 @@ internal class Program
         Console.WriteLine($"SolaxReader startuje, verze: {version}");
 
         var delay = 10;
+
+        Console.CancelKeyPress += (s, e) => {
+            e.Cancel = true;
+            _cts.Cancel();
+        };
 
         CultureInfo.DefaultThreadCurrentCulture = CultureInfo.InvariantCulture;
 
@@ -60,109 +77,129 @@ internal class Program
                 }
             }
         }
+        //---
 
-        while (true)
+        //--- Inicializace MQTT klienta
+        var factory = new MqttFactory();
+
+        _mqttClient = factory.CreateMqttClient();
+
+        _mqttOptions = new MqttClientOptionsBuilder()
+            .WithTcpServer(mqttBrokerUri, 1883)
+            .WithClientId("SolaxReader")
+            .WithCleanSession()
+            .Build();
+        //---
+
+        try
         {
-            var sw = Stopwatch.StartNew();
-
-            Console.Write($"Get data from Solax Inverter [{requestUri}]");
-            var task = GetData(requestUri);
-
-            while (!task.IsCompleted)
+            while (true)
             {
-                Console.Write(".");
+                var sw = Stopwatch.StartNew();
 
-                Thread.Sleep(500);
+                Console.Write($"Get data from Solax Inverter [{requestUri}]...");
+                var data = await GetData(requestUri);
+
+                if (data != null)
+                {
+                    Console.WriteLine($"\nSending data to Mqtt Broker [{mqttBrokerUri}]... ");
+                    await SendData(new SolaxDataSimple(data), mqttBrokerUri);
+                }
+
+                sw.Stop();
+                var remainingDelay = (delay * 1000) - (int)sw.ElapsedMilliseconds;
+                if (remainingDelay > 0)
+                {
+                    Console.WriteLine($"Sleeping [interval is {delay} sec.]... ");
+                    await Task.Delay(remainingDelay, _cts.Token);
+                }
             }
-
-            if (task.Result != null)
+        }
+        catch (OperationCanceledException)
+        {
+            // Tady zachytíme Ctrl+C a slušně se rozloučíme
+            Console.WriteLine("\nProgram ukončen uživatelem (Ctrl+C).");
+        }
+        catch (Exception ex)
+        {
+            // Ostatní nečekané chyby vypíšeme
+            ConsoleWriteLine(ex, true);
+        }
+        finally
+        {
+            // Tady můžeme korektně odpojit MQTT klienta, než se zhasne
+            if (_mqttClient?.IsConnected == true)
             {
-                Console.WriteLine($"\nSending data to Mqtt Broker [{mqttBrokerUri}]... ");
-
-                await SendData(new SolaxDataSimple(task.Result), mqttBrokerUri);
-            }
-
-            sw.Stop();
-
-            if (sw.ElapsedMilliseconds < delay * 1000)
-            {
-                Console.WriteLine($"Sleeping [interval is {delay} sec.]... ");
-                Thread.Sleep((int)(delay * 1000 - sw.ElapsedMilliseconds));
+                await _mqttClient.DisconnectAsync();
+                Console.WriteLine("MQTT klient odpojen.");
             }
         }
     }
 
     static async Task<SolaxData?> GetData(string requestUri)
     {
-        using (var httpClient = new HttpClient())
+        try
         {
+            var postData = new StringContent("optType=ReadRealTimeData&pwd=admin");
+
+            // Použití sdílené instance
+            var response = await _httpClient.PostAsync(requestUri, postData, _cts.Token);
+            var responseData = await response.Content.ReadAsStringAsync();
+
             try
             {
-                httpClient.Timeout = new TimeSpan(0, 0, 5);
-                httpClient.DefaultRequestHeaders.Add("X-Forwarded-For", "5.8.8.8");
-
-                var postData = new StringContent("optType=ReadRealTimeData&pwd=admin");
-                var response = await httpClient.PostAsync(requestUri, postData);
-                var responseData = await response.Content.ReadAsStringAsync();
-
-                try
-                {
-                    return JsonSerializer.Deserialize<SolaxData>(responseData);
-                }
-                catch(Exception ex)
-                {
-                    ConsoleWriteLine(ex, true);
-
-                    return null;
-                }
+                return JsonSerializer.Deserialize<SolaxData>(responseData);
             }
-            catch(Exception ex)
+            catch (Exception ex)
             {
                 ConsoleWriteLine(ex, true);
-
                 return null;
             }
         }
+        catch (Exception ex)
+        {
+            ConsoleWriteLine(ex, true);
+            return null;
+        }
     }
 
-    static async Task SendData(SolaxDataSimple data, string mqttBrokerUri)
+    static async Task SendData(SolaxDataSimple solaxData, string mqttBrokerUri)
     {
-        // Vytvoříke 'náklad'
-        var payload = JsonSerializer.Serialize(data);
-
-        // Vytvoření instance klienta MQTT
-        var factory = new MqttFactory();
-        var client = factory.CreateMqttClient();
-
-        // Nastavení parametrů pro připojení k brokeru
-        var options = new MqttClientOptionsBuilder()
-            .WithTcpServer(mqttBrokerUri, 1883) // Adresa a port brokeru
-            .WithClientId("SolaxReader") // Unikátní ID klienta
-            .WithTimeout(new TimeSpan(0, 0, 3))
-            .Build();
+        if (_mqttClient == null || _mqttOptions == null)
+        {
+            Console.WriteLine("MQTT client not initialized.");
+            return;
+        }
 
         try
         {
-            // Připojení klienta k brokeru
-            await client.ConnectAsync(options);
+            // Pokud nejsme připojeni, připojíme se
+            if (!_mqttClient.IsConnected)
+            {
+                // Používáme CancellationToken.None nebo definovaný timeout
+                await _mqttClient.ConnectAsync(_mqttOptions, CancellationToken.None);
+            }
+
+            // Serializace dat do JSON
+            var payload = JsonSerializer.Serialize(solaxData);
 
             // Vytvoření zprávy
             var message = new MqttApplicationMessageBuilder()
-                .WithTopic("h413/solax") // Název tématu, na které se zpráva odesílá
-                .WithPayload(payload) // Obsah zprávy
-                .WithQualityOfServiceLevel(MqttQualityOfServiceLevel.AtMostOnce) // QoS úroveň
-                .WithRetainFlag(false) // Ponechání zprávy na brokeru
+                .WithTopic("h413/solax")
+                .WithPayload(payload)
+                .WithQualityOfServiceLevel(MqttQualityOfServiceLevel.AtMostOnce)
+                .WithRetainFlag(false)
                 .Build();
 
             // Odeslání zprávy
-            await client.PublishAsync(message);
-
-            // Odpojení klienta od brokeru
-            await client.DisconnectAsync();
+            await _mqttClient.PublishAsync(message, CancellationToken.None);
         }
         catch (Exception ex)
         {
-            ConsoleWriteLine(ex);
+            // Pokud se něco nepovede, vypíšeme chybu, ale program běží dál
+            Console.ForegroundColor = ConsoleColorError;
+            Console.WriteLine($"\nMQTT Error: {ex.Message}");
+            Console.ForegroundColor = ConsoleColorDefault;
         }
     }
 
@@ -172,6 +209,7 @@ internal class Program
         {
             Console.WriteLine();
         }
+
         Console.ForegroundColor = ConsoleColorError;
         Console.WriteLine(ex.Message);
         Console.ForegroundColor = ConsoleColorDefault;
