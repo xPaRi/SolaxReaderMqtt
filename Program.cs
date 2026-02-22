@@ -66,7 +66,7 @@ internal class Program
         {
             //--- Pošleme, že jsme online
             await _mqttClient.ConnectAsync(_mqttOptions, _cts.Token);
-            await _mqttClient.PublishAsync(new MqttApplicationMessageBuilder().WithTopic(SOLAX_STATUS).WithPayload("online").WithRetainFlag().Build());
+            await _mqttClient.PublishAsync(new MqttApplicationMessageBuilder().WithTopic(SOLAX_STATUS).WithPayload("online").WithRetainFlag(true).Build());
             //---
 
             var timer = new PeriodicTimer(TimeSpan.FromSeconds(delay));
@@ -150,6 +150,7 @@ internal class Program
             if (!_mqttClient.IsConnected)
             {
                 await _mqttClient.ConnectAsync(_mqttOptions, _cts.Token);
+                await _mqttClient.PublishAsync(new MqttApplicationMessageBuilder().WithTopic(SOLAX_STATUS).WithPayload("online").WithRetainFlag(true).Build());
             }
 
             // Serializace dat do JSON
