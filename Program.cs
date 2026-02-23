@@ -2,7 +2,6 @@
 using MQTTnet.Client;
 using MQTTnet.Protocol;
 using Solax.SolaxBase;
-using System.Diagnostics;
 using System.Globalization;
 using System.Reflection;
 using System.Text.Json;
@@ -11,8 +10,9 @@ namespace SolaxReaderMqtt;
 
 internal class Program
 {
-    private const string SOLAX_TOPIC = "h413/solax";
-    private const string SOLAX_STATUS = "h413/solax/status";
+    private const string SOLAX_TOPIC_DATA = "h413/solax/data";
+    private const string SOLAX_TOPIC_RAW = "h413/solax/raw";
+    private const string SOLAX_TOPIC_STATUS = "h413/solax/status";
 
     private static readonly ConsoleColor ConsoleColorDefault = Console.ForegroundColor;
     private static readonly ConsoleColor ConsoleColorError = ConsoleColor.Red;
@@ -37,7 +37,7 @@ internal class Program
         ShowHeader();
 
         //--- Načtení proměnných z prostředí a kontrola jejich správnosti. Pokud dojde k chybě, isError bude true a program se ukončí.
-        var (isError, delay, requestUri, mqttBrokerUri) = GetInitVariables();
+        var (isError, isDebug, delay, requestUri, mqttBrokerUri) = GetInitVariables();
 
         if (isError)
         {
@@ -66,7 +66,7 @@ internal class Program
         {
             //--- Pošleme, že jsme online
             await _mqttClient.ConnectAsync(_mqttOptions, _cts.Token);
-            await _mqttClient.PublishAsync(new MqttApplicationMessageBuilder().WithTopic(SOLAX_STATUS).WithPayload("online").WithRetainFlag(true).Build());
+            await _mqttClient.PublishAsync(new MqttApplicationMessageBuilder().WithTopic(SOLAX_TOPIC_STATUS).WithPayload("online").WithRetainFlag(true).Build());
             //---
 
             var timer = new PeriodicTimer(TimeSpan.FromSeconds(delay));
@@ -80,9 +80,15 @@ internal class Program
                 {
                     Console.Write($" OK.\nSending data to Mqtt Broker [{mqttBrokerUri}]... ");
                     await SendData(new SolaxDataSimple(data), mqttBrokerUri);
+
+                    if (isDebug) // Je-li zapnutý debug mód, pošleme i raw data
+                    {
+                        Console.Write($"Sending raw data to Mqtt Broker [{mqttBrokerUri}]... ");
+                        await SendRawData(data.Raw, mqttBrokerUri);
+                    }
                 }
 
-                Console.WriteLine($"Sleeping {delay} sec... ");
+                Console.WriteLine($"Sleeping {delay} sec...\n");
             }
         }
         catch (OperationCanceledException)
@@ -100,7 +106,7 @@ internal class Program
             // Tady můžeme korektně odpojit MQTT klienta, než se zhasne
             if (_mqttClient.IsConnected == true)
             {
-                await _mqttClient.PublishAsync(new MqttApplicationMessageBuilder().WithTopic(SOLAX_STATUS).WithPayload("offline").WithRetainFlag().Build());
+                await _mqttClient.PublishAsync(new MqttApplicationMessageBuilder().WithTopic(SOLAX_TOPIC_STATUS).WithPayload("offline").WithRetainFlag().Build());
                 
                 await _mqttClient.DisconnectAsync();
                 Console.WriteLine("MQTT klient odpojen.");
@@ -117,11 +123,18 @@ internal class Program
         {
             var postData = new StringContent("optType=ReadRealTimeData&pwd=admin");
             var response = await _httpClient.PostAsync(requestUri, postData, _cts.Token);
-            var responseData = await response.Content.ReadAsStringAsync();
+            var responseData = await response.Content.ReadAsStringAsync(_cts.Token);
 
             try
             {
-                return JsonSerializer.Deserialize<SolaxData>(responseData);
+                var result = JsonSerializer.Deserialize<SolaxData>(responseData);
+                
+                if (result != null)
+                { 
+                    result.Raw = responseData;
+                }
+
+                return result;
             }
             catch (Exception ex)
             {
@@ -150,7 +163,7 @@ internal class Program
             if (!_mqttClient.IsConnected)
             {
                 await _mqttClient.ConnectAsync(_mqttOptions, _cts.Token);
-                await _mqttClient.PublishAsync(new MqttApplicationMessageBuilder().WithTopic(SOLAX_STATUS).WithPayload("online").WithRetainFlag(true).Build());
+                await _mqttClient.PublishAsync(new MqttApplicationMessageBuilder().WithTopic(SOLAX_TOPIC_STATUS).WithPayload("online").WithRetainFlag(true).Build());
             }
 
             // Serializace dat do JSON
@@ -158,8 +171,44 @@ internal class Program
 
             // Vytvoření zprávy
             var message = new MqttApplicationMessageBuilder()
-                .WithTopic(SOLAX_TOPIC)
+                .WithTopic(SOLAX_TOPIC_DATA)
                 .WithPayload(payload)
+                .WithQualityOfServiceLevel(MqttQualityOfServiceLevel.AtMostOnce)
+                .WithRetainFlag(false)
+                .Build();
+
+            // Odeslání zprávy
+            await _mqttClient.PublishAsync(message, _cts.Token);
+
+            Console.WriteLine(" OK.");
+        }
+        catch (Exception ex)
+        {
+            ShowError("MQTT", ex);
+        }
+    }
+
+    static async Task SendRawData(string rawData, string mqttBrokerUri)
+    {
+        if (_mqttClient == null || _mqttOptions == null)
+        {
+            Console.WriteLine("MQTT client not initialized.");
+            return;
+        }
+
+        try
+        {
+            // Pokud nejsme připojeni, připojíme se
+            if (!_mqttClient.IsConnected)
+            {
+                await _mqttClient.ConnectAsync(_mqttOptions, _cts.Token);
+                await _mqttClient.PublishAsync(new MqttApplicationMessageBuilder().WithTopic(SOLAX_TOPIC_STATUS).WithPayload("online").WithRetainFlag(true).Build());
+            }
+
+            // Vytvoření zprávy
+            var message = new MqttApplicationMessageBuilder()
+                .WithTopic(SOLAX_TOPIC_RAW)
+                .WithPayload(rawData)
                 .WithQualityOfServiceLevel(MqttQualityOfServiceLevel.AtMostOnce)
                 .WithRetainFlag(false)
                 .Build();
@@ -210,14 +259,29 @@ internal class Program
     /// Pokud dojde k chybě, nastaví isError na true a vypíše chybovou hlášku.
     /// </summary>
     /// <returns></returns>
-    static (bool isError, int delay, string requestUri, string mqttBrokerUri) GetInitVariables()
+    static (bool isError, bool isDebug, int delay, string requestUri, string mqttBrokerUri) GetInitVariables()
     {
         const string SOLAX_URI = "SOLAX_URI";
         const string MQTT_BROKER_URI = "MQTT_BROKER_URI";
         const string SOLAX_READER_DELAY = "SOLAX_READER_DELAY";
+        const string SOLAX_READER_DEBUG = "SOLAX_READER_DEBUG";
 
         // Předpokládáme, že nedojde k chybě, dokud se neprokáže opak
         var isError = false;
+
+        //--- DEBUG
+        var isDebug = false;
+
+        var isDebugStr = Environment.GetEnvironmentVariable(SOLAX_READER_DEBUG);
+
+        if (!string.IsNullOrWhiteSpace(isDebugStr))
+        {
+            if (bool.TryParse(isDebugStr, out var isDebugTemp))
+            {
+                isDebug = isDebugTemp;
+            }
+        }
+        //---
 
         //--- SOLAX_READER_DELAY
         var delay = 10;
@@ -262,7 +326,7 @@ internal class Program
         requestUri = @$"http://{requestUri}";
         //---
 
-        return (isError, delay, requestUri, mqttBrokerUri);
+        return (isError, isDebug, delay, requestUri, mqttBrokerUri);
     }
 
     /// <summary>
@@ -280,7 +344,7 @@ internal class Program
             .WithClientId("SolaxReader")
             .WithCleanSession()
             //--- ZÁVĚŤ (LWT) ---
-            .WithWillTopic(SOLAX_STATUS)
+            .WithWillTopic(SOLAX_TOPIC_STATUS)
             .WithWillPayload("offline")
             .WithWillRetain(true)
             .WithWillQualityOfServiceLevel(MqttQualityOfServiceLevel.AtLeastOnce)

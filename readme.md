@@ -3,7 +3,11 @@
 Čte data ze střídače Solax, malinko je přežvýká a pošle je na MQTT Brooker
 
 ### Příprava RPi
+1. Přihlášení certifikátem (viz níže)
+    `PS C:\Users\pari> ssh rpi`
+
 1. Přihlášení certifikátem (viz. `c:\Users\pari\.ssh\`)
+    
     **`config`**
     ```
     Host rpi Raspberry na pokusy s .NET
@@ -17,21 +21,20 @@
     **`rpi2b.pub`**
     Soubor s veřejným klíčem
 
-2. Instalace .NETu
+3. Instalace .NETu
 
     ```bash
     sudo apt update
     sudo apt install -y libicu-dev zlib1g libssl-dev
     sudo apt install -y aspnetcore-runtime-8.0
     ```
-
-
+    
 ### Nasazení
 Jelikož nejsem Linux Guru, tak to tu popíšu krok za krokem:
 
 Vytvoříme službu **solax.service**
 
-Toto vyvolá editor:`sudo nano /etc/systemd/system/solax.service`
+Toto vyvolá editor: `sudo nano /etc/systemd/system/solax.service`
 
 Vložíme:
 ```ini
@@ -58,7 +61,7 @@ RestartSec=10
 WantedBy=multi-user.target
 ```
 
-Aktivujeme službu
+Službu (deamon) aktivujeme takto, stejně postupujeme i v případě, že modifikujeme parametry:
 
 ```bash
 sudo systemctl daemon-reload
@@ -66,7 +69,7 @@ sudo systemctl enable solax.service
 sudo systemctl start solax.service
 ```
 
-### Kompilace zdrojáku, jeho doručení a restart služby
+### Kompilace zdrojáku, jeho doručení a start služby
 
 Spustit povelový soubor:
 `c:\dev\PARI\SolaxReaderMqtt\public.cmd`
