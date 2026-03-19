@@ -6,7 +6,7 @@
 1. Přihlášení certifikátem (viz níže)
     `PS C:\Users\pari> ssh rpi`
 
-1. Přihlášení certifikátem (viz. `c:\Users\pari\.ssh\`)
+2. Přihlášení certifikátem (viz. `c:\Users\pari\.ssh\`)
     
     **`config`**
     ```

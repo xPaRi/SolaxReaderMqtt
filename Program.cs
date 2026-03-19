@@ -127,7 +127,8 @@ internal class Program
 
             try
             {
-                var result = JsonSerializer.Deserialize<SolaxData>(responseData);
+                //var result = JsonSerializer.Deserialize<SolaxData>(responseData);
+                var result = JsonSerializer.Deserialize(responseData, SolaxJsonContext.Default.SolaxData);
                 
                 if (result != null)
                 { 
@@ -167,7 +168,7 @@ internal class Program
             }
 
             // Serializace dat do JSON
-            var payload = JsonSerializer.Serialize(solaxData);
+            var payload = JsonSerializer.Serialize(solaxData, SolaxJsonContext.Default.SolaxDataSimple);
 
             // Vytvoření zprávy
             var message = new MqttApplicationMessageBuilder()
