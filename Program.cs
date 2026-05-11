@@ -121,7 +121,7 @@ internal class Program
 
         try
         {
-            var postData = new StringContent("optType=ReadRealTimeData&pwd=admin");
+            var postData = new StringContent("optType=ReadRealTimeData&pwd=SRRF6BTSVV");
             var response = await _httpClient.PostAsync(requestUri, postData, _cts.Token);
             var responseData = await response.Content.ReadAsStringAsync(_cts.Token);
 
